@@ -145,10 +145,12 @@ int thread_get_load_avg (void);
 
 void do_iret (struct intr_frame *tf);
 
-/*------------------------- [P1] Alarm Clock --------------------------*/
+/*------------------------- [P1] Alarm Clock & Priority Scheduling --------------------------*/
 int64_t get_global_ticks(void);
 void set_global_ticks(int64_t ticks);
 void thread_awake(int64_t ticks);
 void thread_sleep(int64_t ticks);
+void test_max_priority (void);
+bool cmp_priority (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED);
 
 #endif /* threads/thread.h */

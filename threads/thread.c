@@ -70,11 +70,12 @@ static void do_schedule(int status);
 static void schedule (void);
 static tid_t allocate_tid (void);
 
-/*------------------------- [P1] Alarm Clock --------------------------*/
+/*------------------------- [P1] Alarm Clock & Priority Scheduling --------------------------*/
 int64_t get_global_ticks(void);
 void set_global_ticks(int64_t ticks);
 void thread_awake(int64_t ticks);
 void thread_sleep(int64_t ticks);
+bool cmp_priority (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED);
 
 /* Returns true if T appears to point to a valid thread. */
 #define is_thread(t) ((t) != NULL && (t)->magic == THREAD_MAGIC)
@@ -107,6 +108,7 @@ static uint64_t gdt[3] = { 0, 0x00af9a000000ffff, 0x00cf92000000ffff };
    finishes. */
 void
 thread_init (void) {
+	printf("thread init\n");
 	ASSERT (intr_get_level () == INTR_OFF);
 
 	/* Reload the temporal gdt for the kernel
@@ -219,9 +221,14 @@ thread_create (const char *name, int priority,
 	t->tf.cs = SEL_KCSEG;
 	t->tf.eflags = FLAG_IF;
 
+	/*------------------------- [P1] Priority Scheduling --------------------------*/
 	/* Add to run queue. */
-	thread_unblock (t);
+	thread_unblock (t); // ready_list 에 새로 넣은 스레드 
 
+	if (thread_get_priority() < priority) { //1. 현재 실행중인 스레드와 새로 추가하려는 스레드 비교
+		thread_yield(); //2. 만약 새로 추가하려는 스레드가 현재 실행중인 스레드보다 우선순위가 높으면 CPU를 선점한다.
+	}
+	
 	return tid;
 }
 
@@ -257,7 +264,11 @@ thread_unblock (struct thread *t) {
 
 	old_level = intr_disable ();
 	ASSERT (t->status == THREAD_BLOCKED);
+	/*------------------------- [P1] Priority Scheduling --------------------------*/
+	/* origin code
 	list_push_back (&ready_list, &t->elem);
+	*/
+	list_insert_ordered(&ready_list, &t -> elem, cmp_priority, NULL); // 정렬된 상태로 스레드가 삽입되도록 한다.
 	t->status = THREAD_READY;
 	intr_set_level (old_level);
 }
@@ -309,7 +320,6 @@ thread_exit (void) {
 	NOT_REACHED ();
 }
 
-/*------------------------- [P1] Alarm Clock --------------------------*/
 /* Yields the CPU.  The current thread is not put to sleep and
    may be scheduled again immediately at the scheduler's whim. */
 void
@@ -320,8 +330,14 @@ thread_yield (void) {
 	ASSERT (!intr_context ());
 
 	old_level = intr_disable (); // 인터럽터를 비활성화한다.
-	if (curr != idle_thread) // 현재 스레드가 유휴 스레드가 아니면 리스트의 맨 뒤로 넣는다.
+	if (curr != idle_thread) { // 현재 스레드가 유휴 스레드가 아니면 리스트의 맨 뒤로 넣는다.
+		/*------------------------- [P1] Alarm Clock --------------------------*/
+		/* origin code
 		list_push_back (&ready_list, &curr->elem); // 현재 스레드를 레디리스트의 맨 뒤로 삽입한다.
+		*/
+		/*------------------------- [P1] Priority Scheduling --------------------------*/
+		list_insert_ordered(&ready_list, &curr -> elem, cmp_priority, NULL); // 정렬된 상태로 스레드가 삽입되도록 한다.
+	}
 	do_schedule (THREAD_READY); // ready 상태로 전환하고 컨텍스트 스위칭을 한다.
 	intr_set_level (old_level); // 이후 다시 이전 상태로 되돌린다.
 }
@@ -386,16 +402,33 @@ thread_awake(int64_t ticks){
 	}
 }
 
+/*------------------------- [P1] Priority Scheduling --------------------------*/
 /* Sets the current thread's priority to NEW_PRIORITY. */
+// 현재 스레드의 우선 순위를 변경한다.
 void
 thread_set_priority (int new_priority) {
-	thread_current ()->priority = new_priority;
+	thread_current ()->priority = new_priority; // 현재 스레드의 우선순위를 new_priority(매개변수)로 바꿈
+
+	if (thread_get_priority() <  list_entry(list_begin(&ready_list), struct thread, elem) -> priority){
+		thread_yield();
+	}
 }
 
 /* Returns the current thread's priority. */
+// 현재 실행중인 스레드의 우선 순위 리턴
 int
 thread_get_priority (void) {
 	return thread_current ()->priority;
+}
+
+/*------------------------- [P1] Priority Scheduling --------------------------*/
+/* 인자로 주어진 스레드들의 우선 순위를 비교한다. */
+// a의 우선 순위가 더 크면 1, b가 같거나 더 크면 0 리턴
+bool
+cmp_priority (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED) {
+	return list_entry(a, struct thread, elem) -> priority \
+		> list_entry(b, struct thread, elem) -> priority ? \
+		1 : 0; 
 }
 
 /* Sets the current thread's nice value to NICE. */
