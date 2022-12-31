@@ -32,11 +32,12 @@
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 
-// 추가 구현 함수
+/*------------------------- [P1] Priority Scheduling --------------------------*/
 void donate_priority(void);
 void remove_with_lock(struct lock *);
 void refresh_priority(void);
-bool cmp_d_priority (const struct list_elem *, const struct list_elem *, void *aux);
+static bool cmp_d_priority (const struct list_elem *, const struct list_elem *, void *aux);
+static bool cmp_sem_priority (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED);
 
 /* Initializes semaphore SEMA to VALUE.  A semaphore is a
    nonnegative integer along with two atomic operators for
@@ -257,6 +258,7 @@ lock_held_by_current_thread (const struct lock *lock) {
 }
 
 
+/*------------------------- [P1] Priority Scheduling --------------------------*/
 // priority donation을 수행하는 함수
 // nested donation 고려
 void 
@@ -311,7 +313,7 @@ refresh_priority(void){
 }
 
 // donation elem 으로 정렬 기준 재지정
-bool
+static bool
 cmp_d_priority (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED) {
 	return list_entry(a, struct thread, d_elem) -> priority \
 		> list_entry(b, struct thread, d_elem) -> priority ? \
@@ -323,6 +325,13 @@ struct semaphore_elem {
 	struct list_elem elem;              /* List element. */
 	struct semaphore semaphore;         /* This semaphore. */
 };
+
+// Condition variables
+static bool
+cmp_sem_priority (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED) {
+	return list_entry (list_begin (&list_entry (a, struct semaphore_elem, elem)->semaphore.waiters), struct thread, elem)->priority \
+		> list_entry (list_begin (&list_entry (b, struct semaphore_elem, elem)->semaphore.waiters), struct thread, elem)->priority;
+}
 
 /* Initializes condition variable COND.  A condition variable
    allows one piece of code to signal a condition and cooperating
@@ -364,7 +373,9 @@ cond_wait (struct condition *cond, struct lock *lock) {
 	ASSERT (lock_held_by_current_thread (lock));
 
 	sema_init (&waiter.semaphore, 0);
-	list_push_back (&cond->waiters, &waiter.elem);
+	/*------------------------- [P1] Priority Scheduling - Condition variables --------------------------*/
+	// list_push_back (&cond->waiters, &waiter.elem);
+	list_insert_ordered (&cond->waiters, &waiter.elem, cmp_sem_priority, NULL);
 	lock_release (lock);
 	sema_down (&waiter.semaphore);
 	lock_acquire (lock);
@@ -384,9 +395,11 @@ cond_signal (struct condition *cond, struct lock *lock UNUSED) {
 	ASSERT (!intr_context ());
 	ASSERT (lock_held_by_current_thread (lock));
 
-	if (!list_empty (&cond->waiters))
+	if (!list_empty (&cond->waiters)){
+		list_sort (&cond->waiters, cmp_sem_priority, NULL);
 		sema_up (&list_entry (list_pop_front (&cond->waiters),
 					struct semaphore_elem, elem)->semaphore);
+	}
 }
 
 /* Wakes up all threads, if any, waiting on COND (protected by
