@@ -91,11 +91,16 @@ struct thread {
 	enum thread_status status;          /* Thread state. */
 	char name[16];                      /* Name (for debugging purposes). */
 	int priority;                       /* Priority. */
-/*------------------------- [P1] Alarm Clock --------------------------*/
+	/*------------------------- [P1] Alarm Clock & Priority Scheduling --------------------------*/
+	int priority_base; // donation 이후 우선순위 초기화를 위한 초기 우선 순위 값
+	struct lock *wait_on_lock; // 해당 스레드가 대기하고 있는 lock의 주소
 	int64_t wakeup_tick; // 해당 스레드를 깨워야하는 시간(local ticks)
 
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
+
+	struct list donations; // 해당 스레드에 priority donation 해준 스레드 리스트
+	struct list_elem d_elem; // donations 를 위한 elem
 
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */

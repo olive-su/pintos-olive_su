@@ -407,10 +407,11 @@ thread_awake(int64_t ticks){
 // 현재 스레드의 우선 순위를 변경한다.
 void
 thread_set_priority (int new_priority) {
-	thread_current ()->priority = new_priority; // 현재 스레드의 우선순위를 new_priority(매개변수)로 바꿈
+	thread_current ()->priority_base = new_priority;
+	refresh_priority ();
 
-	if (thread_get_priority() <  list_entry(list_begin(&ready_list), struct thread, elem) -> priority){
-		thread_yield();
+	if (thread_get_priority () < list_entry (list_begin (&ready_list), struct thread, elem)->priority) {
+		thread_yield ();
 	}
 }
 
@@ -519,9 +520,12 @@ init_thread (struct thread *t, const char *name, int priority) {
 	strlcpy (t->name, name, sizeof t->name);
 	t->tf.rsp = (uint64_t) t + PGSIZE - sizeof (void *);
 	t->priority = priority;
+	/*------------------------- [P1] Priority Scheduling --------------------------*/
+	t->priority_base = priority; // 초기 priority 상태를 확인한다.
+	t->wait_on_lock = NULL; // 스레드 생성시에는 기다리는 락이 없으니 NULL값으로 설정한다.
+	list_init (&t->donations); // donations 초기화
 	t->magic = THREAD_MAGIC;
 }
-
 // 준비 리스트에서 맨 앞의 스레드를 뽑아와, 컨텍스트 스위치 수행
 /* Chooses and returns the next thread to be scheduled.  Should
    return a thread from the run queue, unless the run queue is
