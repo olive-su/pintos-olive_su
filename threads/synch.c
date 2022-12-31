@@ -65,8 +65,10 @@ sema_down (struct semaphore *sema) {
 	ASSERT (!intr_context ());
 
 	old_level = intr_disable ();
-	while (sema->value == 0) {
-		list_push_back (&sema->waiters, &thread_current ()->elem);
+	/*------------------------- [P1] Semaphore --------------------------*/
+	while (sema->value == 0) { // 공유 자원을 이용할 수 없는 상태
+		list_insert_ordered(&sema->waiters, &thread_current ()->elem, cmp_priority, NULL);
+		// list_push_back (&sema->waiters, &thread_current ()->elem);
 		thread_block ();
 	}
 	sema->value--;
@@ -109,10 +111,14 @@ sema_up (struct semaphore *sema) {
 	ASSERT (sema != NULL);
 
 	old_level = intr_disable ();
-	if (!list_empty (&sema->waiters))
-		thread_unblock (list_entry (list_pop_front (&sema->waiters),
-					struct thread, elem));
 	sema->value++;
+	if (!list_empty (&sema->waiters)){
+		list_sort(&sema->waiters, cmp_priority, NULL); // waiter_list 정렬
+		struct thread *new_lockholder = list_entry(list_pop_front (&sema->waiters), struct thread, elem);
+		thread_unblock (new_lockholder); // 세마포어를 해제하고 레디 상태로 만들어준다.
+		if (thread_get_priority() < new_lockholder->priority )
+			thread_yield();
+	}
 	intr_set_level (old_level);
 }
 
