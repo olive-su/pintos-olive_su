@@ -91,6 +91,8 @@ struct thread {
 	enum thread_status status;          /* Thread state. */
 	char name[16];                      /* Name (for debugging purposes). */
 	int priority;                       /* Priority. */
+/*------------------------- [P1] Alarm Clock --------------------------*/
+	int64_t wakeup_tick; // 해당 스레드를 깨워야하는 시간(local ticks)
 
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
@@ -119,7 +121,7 @@ void thread_start (void);
 
 void thread_tick (void);
 void thread_print_stats (void);
-
+ 
 typedef void thread_func (void *aux);
 tid_t thread_create (const char *name, int priority, thread_func *, void *);
 
@@ -142,5 +144,11 @@ int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 
 void do_iret (struct intr_frame *tf);
+
+/*------------------------- [P1] Alarm Clock --------------------------*/
+int64_t get_global_ticks(void);
+void set_global_ticks(int64_t ticks);
+void thread_awake(int64_t ticks);
+void thread_sleep(int64_t ticks);
 
 #endif /* threads/thread.h */

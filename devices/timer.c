@@ -17,8 +17,9 @@
 #error TIMER_FREQ <= 1000 recommended
 #endif
 
+/*------------------------- [P1] Alarm Clock --------------------------*/
 /* Number of timer ticks since OS booted. */
-static int64_t ticks;
+static int64_t ticks; // 프로그램 부트 시간 (현재 시각(eg. 12시))
 
 /* Number of loops per timer tick.
    Initialized by timer_calibrate(). */
@@ -87,14 +88,21 @@ timer_elapsed (int64_t then) {
 	return timer_ticks () - then;
 }
 
+/*------------------------- [P1] Alarm Clock --------------------------*/
 /* Suspends execution for approximately TICKS timer ticks. */
+// 현재 실행 중인 스레드를 ticks 만큼의 시간이 지나기 이전까지 해당 스레드의 호출을 중단한다.
 void
-timer_sleep (int64_t ticks) {
-	int64_t start = timer_ticks ();
+timer_sleep (int64_t ticks) { // ticks 시간 만큼 뒤에 꺠어난다.(상대 시간 (eg. 5분))
+	int64_t start = timer_ticks (); // 현재 시간(프로그램 부트 이후 시간 (eg. 12시))
 
 	ASSERT (intr_get_level () == INTR_ON);
-	while (timer_elapsed (start) < ticks)
-		thread_yield ();
+	/* 기존 코드 : busy waiting 방식
+		while (timer_elapsed (start) < ticks)
+			thread_yield (); 
+	*/
+	if (timer_elapsed (start) < ticks) // 현재 시간부터의 경과 시간이 ticks 보다 작으면(깨울 때가 아님)
+		thread_sleep(start + ticks); // 해당 스레드를 sleep(BLOCKED)시킨다.
+		// ↳ 해당 스레드가 깨어나야할 절대 시간인 (start + ticks)를 인자로 넘긴다.
 }
 
 /* Suspends execution for approximately MS milliseconds. */
@@ -121,11 +129,16 @@ timer_print_stats (void) {
 	printf ("Timer: %"PRId64" ticks\n", timer_ticks ());
 }
 
+/*------------------------- [P1] Alarm Clock --------------------------*/
 /* Timer interrupt handler. */
 static void
 timer_interrupt (struct intr_frame *args UNUSED) {
 	ticks++;
-	thread_tick ();
+	thread_tick (); // update the cpu usage for running process
+
+	if (get_global_ticks() <= ticks){ // 현재 시각이 글로벌 틱보다 크면 스레드 깨우기
+		thread_awake(ticks);
+	}
 }
 
 /* Returns true if LOOPS iterations waits for more than one timer
