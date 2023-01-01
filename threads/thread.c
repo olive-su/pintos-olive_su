@@ -194,8 +194,7 @@ thread_print_stats (void) {
    PRIORITY, but no actual priority scheduling is implemented.
    Priority scheduling is the goal of Problem 1-3. */
 tid_t
-thread_create (const char *name, int priority,
-		thread_func *function, void *aux) {
+thread_create (const char *name, int priority, thread_func *function, void *aux) {
 	struct thread *t;
 	tid_t tid;
 
@@ -209,6 +208,15 @@ thread_create (const char *name, int priority,
 	/* Initialize thread. */
 	init_thread (t, name, priority);
 	tid = t->tid = allocate_tid ();
+	
+	/*------------------------- [P2] System Call --------------------------*/
+	t->fdt = palloc_get_multiple(PAL_ZERO, FDT_PAGES);
+	if (t->fdt == NULL) {
+		return TID_ERROR;
+	}
+	t->next_fd = 2; // 0 : stdin, 1 : stdout
+	t->fdt[0] = 1; // STDIN_FILENO -> dummy value
+	t->fdt[1] = 2; // STDOUT_FILENO -> dummy value 
 
 	/* Call the kernel_thread if it scheduled.
 	 * Note) rdi is 1st argument, and rsi is 2nd argument. */
@@ -305,9 +313,11 @@ thread_tid (void) {
 
 /* Deschedules the current thread and destroys it.  Never
    returns to the caller. */
+/*------------------------- [P2] System Call --------------------------*/
 void
 thread_exit (void) {
 	ASSERT (!intr_context ());
+	struct thread *curr = thread_current (); // 현재 스레드의 포인터
 
 #ifdef USERPROG
 	process_exit ();

@@ -22,6 +22,8 @@
 #include "vm/vm.h"
 #endif
 
+#include "lib/user/syscall.h" // need to Calling syscall_close.
+
 static void process_cleanup (void);
 static bool load (const char *file_name, struct intr_frame *if_);
 static void initd (void *f_name);
@@ -42,9 +44,10 @@ process_init (void) {
  * before process_create_initd() returns. Returns the initd's
  * thread id, or TID_ERROR if the thread cannot be created.
  * Notice that THIS SHOULD BE CALLED ONCE. */
+/*------------------------- [P2] Argument Passing --------------------------*/
 tid_t
 process_create_initd (const char *file_name) {
-	char *fn_copy;
+	char *fn_copy, *save_ptr;
 	tid_t tid;
 
 	/* Make a copy of FILE_NAME.
@@ -53,8 +56,9 @@ process_create_initd (const char *file_name) {
 	if (fn_copy == NULL)
 		return TID_ERROR;
 	strlcpy (fn_copy, file_name, PGSIZE);
-
 	/* Create a new thread to execute FILE_NAME. */
+	strtok_r (file_name, " ", &save_ptr); // 실행 파일 이름 파싱
+	// ↳해당 라인을 추가하지 않으면 커맨드 라인 전체가 스레드 이름으로 지정된다.
 	tid = thread_create (file_name, PRI_DEFAULT, initd, fn_copy);
 	if (tid == TID_ERROR)
 		palloc_free_page (fn_copy);
@@ -168,8 +172,10 @@ error:
 int
 process_exec (void *f_name) {
 	char *file_name = f_name; // 실행할 파일 이름(argv[0])
+	// char *file_name_copy[48];
 	bool success;
 
+	// memcpy(file_name_copy, file_name, strlen(file_name) + 1);
 
 	/* We cannot use the intr_frame in the thread structure.
 	 * This is because when current thread rescheduled,
@@ -180,7 +186,7 @@ process_exec (void *f_name) {
 	_if.eflags = FLAG_IF | FLAG_MBS;
 
 	int argc = 0;
-	char *argv[128];
+	char *argv[128]; // 64bit computer(uint64_t : 8byte)
 
 	/* 커맨드 라인을 파싱한다. */
 	argument_parse(file_name, &argc, argv);
@@ -191,8 +197,10 @@ process_exec (void *f_name) {
 	/* And then load the binary */
 	success = load (file_name, &_if);
 
-	argument_stack(argc, argv, &_if);
-	hex_dump(_if.rsp, _if.rsp, USER_STACK - _if.rsp, true);
+	argument_stack(argc, argv, &_if); // argc, argv로 커맨드 라인 파싱
+	// hex_dump(_if.rsp, _if.rsp, USER_STACK - _if.rsp, true); // 메모리에 적재된 상태 출력
+	// ↳ Project 2 - System Calls 부분부터는 테스트 하려면 프린트 자체가 찍히면 안되므로 주석 처리
+
 	/* If load failed, quit. */
 	palloc_free_page (file_name);
 	if (!success)
@@ -215,14 +223,8 @@ process_exec (void *f_name) {
  * does nothing. */
 int
 process_wait (tid_t child_tid UNUSED) {
-	/*------------------------- [P2] Argument Passing --------------------------*/
-	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
-	 * XXX:       to add infinite loop here before
-	 * XXX:       implementing the process_wait. */
-	for (size_t i = 0; i < 1000000000; i++)
-	{
-		/* code */
-	}
+	for (size_t i = 0; i < 100000000; i++) {}
+	// Hint) process_wait를 구현하기 전에는 무한루프를 구현하라
 	
 	return -1;
 }
@@ -235,6 +237,12 @@ process_exit (void) {
 	 * TODO: Implement process termination message (see
 	 * TODO: project2/process_termination.html).
 	 * TODO: We recommend you to implement process resource cleanup here. */
+	
+	// for (int i = 0; i < FDCOUNT_LIMIT; i++) { // 프로세스 종료 시, 메모리 누수 방지를 위해 프로세스에 열린 모든 파일 닫음
+	// 	close(i);
+	// }
+	palloc_free_page(curr->fdt); // fd table 메모리 해제
+	
 
 	process_cleanup ();
 }
@@ -662,7 +670,6 @@ setup_stack (struct intr_frame *if_) {
 #endif /* VM */
 
 /*------------------------- [P2] Argument Passing --------------------------*/
-
 static void argument_parse(char *file_name, int *argc_ptr, char *argv[]){
 	char *token, *save_ptr;
 	

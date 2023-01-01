@@ -8,7 +8,7 @@
 #ifdef VM
 #include "vm/vm.h"
 #endif
-
+// #define USERPROG // syscall.c 파일에서 에러 뜨는 부분 방지
 
 /* States in a thread's life cycle. */
 enum thread_status {
@@ -27,6 +27,10 @@ typedef int tid_t;
 #define PRI_MIN 0                       /* Lowest priority. */
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
+
+/*------------------------- [P2] System Call --------------------------*/
+#define FDT_PAGES 3
+#define FDCOUNT_LIMIT FDT_PAGES *(1<<9)
 
 /* A kernel thread or user process.
  *
@@ -102,9 +106,14 @@ struct thread {
 	struct list donations; // 해당 스레드에 priority donation 해준 스레드 리스트
 	struct list_elem d_elem; // donations 를 위한 elem
 
+
+/*------------------------- [P2] System Call --------------------------*/
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
 	uint64_t *pml4;                     /* Page map level 4 */
+	int exit_status;
+	struct file **fdt; // 파일 디스크립터 테이블(프로세스당 개별적으로 존재)
+	int next_fd;
 #endif
 #ifdef VM
 	/* Table for whole virtual memory owned by thread. */
@@ -126,7 +135,7 @@ void thread_start (void);
 
 void thread_tick (void);
 void thread_print_stats (void);
- 
+
 typedef void thread_func (void *aux);
 tid_t thread_create (const char *name, int priority, thread_func *, void *);
 
