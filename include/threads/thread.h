@@ -5,6 +5,7 @@
 #include <list.h>
 #include <stdint.h>
 #include "threads/interrupt.h"
+#include "threads/synch.h"
 #ifdef VM
 #include "vm/vm.h"
 #endif
@@ -29,8 +30,14 @@ typedef int tid_t;
 #define PRI_MAX 63                      /* Highest priority. */
 
 /*------------------------- [P2] System Call --------------------------*/
-#define FDT_PAGES 3
-#define FDCOUNT_LIMIT FDT_PAGES *(1<<9)
+#define FDT_PAGES 3 // fdt 할당시 필요한 페이지 개수
+#define FDCOUNT_LIMIT FDT_PAGES *(1<<9) // 3(테이블 개수) * 512(한 테이블 당 전체 엔트리 개수)
+// ↳ [comment] FDT_PAGES < 3 으로 하면 "multi-oom"테스트에서 터진다.
+/*
+	- 한 페이지 당 엔트리 개수가 512인 이유?
+		- 기본으로 설정된 페이지 하나의 사이즈 : PGSIZE(1 << 12) _ Ref. "threads/vaddr.h"
+		- PGSIZE / sizeof(struct file**)[= 8byte] = 512(개의 엔트리)
+*/
 
 /* A kernel thread or user process.
  *
@@ -111,9 +118,22 @@ struct thread {
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
 	uint64_t *pml4;                     /* Page map level 4 */
-	int exit_status;
 	struct file **fdt; // 파일 디스크립터 테이블(프로세스당 개별적으로 존재)
-	int next_fd;
+	int next_fd; // 다음 fd 인덱스
+
+	// Ref_92p. Hanyang Univ
+	struct intr_frame parent_if; // 부모 프로세스의 인터럽트 프레임
+	struct list child_list; // 자식 프로세스 리스트
+	struct list_elem child_elem; // 자식 프로세스 리스트의 element
+	
+	struct file *running; // 현재 실행 중인 파일
+	int exit_status; // 프로세스의 종료 유무 확인
+
+	struct semaphore fork_sema; // fork가 완료될 때 
+    struct semaphore free_sema; // 자식 프로세스가 종료될 때까지 부모 프로세스는 대기
+	struct semaphore wait_sema; // 자식 프로세스가 종료될 때까지 대기. 종료 상태 저장
+	
+
 #endif
 #ifdef VM
 	/* Table for whole virtual memory owned by thread. */

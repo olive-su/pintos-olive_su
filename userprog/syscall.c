@@ -1,7 +1,6 @@
 #include "userprog/syscall.h"
 #include <stdio.h>
 #include <syscall-nr.h>
-#include "threads/synch.h" // need to lock
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 #include "threads/loader.h"
@@ -9,31 +8,26 @@
 #include "threads/flags.h"
 #include "intrinsic.h"
 
-#include "lib/user/syscall.h" // need to pid_t
-#include "filesys/filesys.h"
-#include "filesys/file.h"
-#include <list.h>
-#include "threads/palloc.h"
-#include "threads/vaddr.h"
-#include "userprog/process.h"
-#include "threads/synch.h"
+#include "filesys/filesys.h" 	// filesys_* func
+#include "filesys/file.h"		// file_* func
+#include "threads/vaddr.h"		// is_user_vaddr
+// #include "lib/user/syscall.h" 	// pid_t
+#include "threads/palloc.h" 	// palloc_get_page
+#include "lib/stdio.h" 			// predefined fd
+#include "threads/synch.h" 		// lock
 
-// #include "lib/user/syscall.h" // need to pid_t
-// #include "threads/palloc.h" // need to palloc_get_page
-// #include "lib/stdio.h" // need to Predefined file handles
-// #include "threads/synch.h" // need to lock
+typedef int pid_t; // #include "lib/user/syscall.h" -> type conflict 발생으로 인한 재정의
 
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
 /*------------------------- [P2] System Call --------------------------*/
 
-void check_address(void *addr);
 void get_argument(void *rsp, int argc, void *argv[]);
 void halt (void);
 void exit (int status);
-pid_t fork (const char *thread_name);
+pid_t fork (const char *thread_name, struct intr_frame *f);
 int exec (const char *file);
-int wait (pid_t);
+int wait (tid_t pid);
 bool create (const char *file, unsigned initial_size);
 bool remove (const char *file);
 int open (const char *file);
@@ -44,10 +38,11 @@ void seek (int fd, unsigned position);
 unsigned tell (int fd);
 void close (int fd);
 
-/*------------------------- [P2] System Call - fd function --------------------------*/
-int fdt_add_fd(struct file *f); //
-struct file *fdt_get_file(int fd); //
-void fdt_remove_fd(int fd); //
+/*------------------------- [P2] System Call - help function --------------------------*/
+static void check_address(void *addr);
+static int fdt_add_fd(struct file *f); 
+static struct file *fdt_get_file(int fd); 
+static void fdt_remove_fd(int fd);
 
 /* System call.
  *
@@ -75,7 +70,7 @@ syscall_init (void) {
 			FLAG_IF | FLAG_TF | FLAG_DF | FLAG_IOPL | FLAG_AC | FLAG_NT);
 	
 	/*------------------------- [P2] System Call --------------------------*/	
-	lock_init(&filesys_lock);
+	lock_init(&filesys_lock); // 파일 읽고 쓰기에 필요한 락 초기화 _defined "userprog/syscall.h"
 }
 
 /* The main system call interface */
@@ -93,16 +88,16 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	case SYS_EXIT:
 		exit (f->R.rdi);
 		break;
-	// case SYS_FORK:
-	// 	f->R.rax = fork (f->R.rdi, f);
-	// 	break;
-	// case SYS_EXEC:
-	// 	if (exec (f->R.rdi) == -1)
-	// 		exit (-1);
-	// 	break;
-	// case SYS_WAIT:
-	// 	f->R.rax = wait (f->R.rdi);
-	// 	break;
+	case SYS_FORK:
+		f->R.rax = fork (f->R.rdi, f);
+		break;
+	case SYS_EXEC:
+		if (exec (f->R.rdi) == -1)
+			exit (-1);
+		break;
+	case SYS_WAIT:
+		f->R.rax = wait (f->R.rdi);
+		break;
 	case SYS_CREATE:
 		f->R.rax = create (f->R.rdi, f->R.rsi);
 		break;
@@ -136,21 +131,9 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	}
 	// printf ("system call!\n");
 	// thread_exit ();
-	// ↳ Project 2 - System Calls 부분부터는 테스트 하려면 프린트 자체가 찍히면 안되므로 주석 처리
 }
 
 /*------------------------- [P2] System Call --------------------------*/
-/**
- * @brief 주소 값이 유효한 주소 영역인지 확인
- * @details 사용자가 Null 포인터 @n 매핑되지 않은 가상 메모리에 대한 포인터 @n 커널 가상 주소 공간에 대한 포인터(KERN_BASE)
- * @param addr 
- */
-void 
-check_address(void *addr) {
- 	struct thread *curr = thread_current();
-	if (!is_user_vaddr(addr) || pml4_get_page(curr -> pml4, addr) == NULL || addr == NULL) // 유저 영역인지  NULL 포인터인지 확인
-		exit(-1);
-}
 
 /**
  * @brief 핀토스 자체를 종료시키는 시스템 콜
@@ -172,6 +155,31 @@ exit(int status) {
 	curr->exit_status = status;
 	printf("%s: exit(%d)\n", curr->name, status);
 	thread_exit();
+}
+
+pid_t fork (const char *thread_name, struct intr_frame *f) {
+	check_address(thread_name);
+	return process_fork(thread_name, f);
+}
+
+int exec (const char *file){
+	check_address(file);
+
+	int size = strlen(file) + 1; // 파일 사이즈(NULL 포함하기 위해 +1)
+	char *fn_copy = palloc_get_page(PAL_ZERO);
+
+	if (fn_copy == NULL)// 메모리 할당 불가 시
+		exit(-1);
+	strlcpy(fn_copy, file, size);
+
+	if (process_exec(fn_copy) == -1) // [process_exec] 'load (file_name, &_if);' -> load 실패 시
+		return -1;
+	
+	return 0;
+}
+
+int wait (tid_t pid){
+	process_wait(pid);
 }
 
 /**
@@ -200,7 +208,6 @@ remove(const char *file){
 	check_address(file);
 	return filesys_remove(file);
 }
-
 
 /**
  * @brief 파일을 열 때 사용하는 시스템 콜
@@ -353,11 +360,22 @@ close (int fd){
 	
 	fdt_remove_fd(fd); // fd table에서 해당 fd값을 제거한다.
 
-	// file_close(target_file); // filesys에 구현된 file_close를 이용해, 해당 파일을 닫는다.
+	file_close(target_file); // 열었던 파일을 닫는다.
 }
 
 
 /*------------------------- [P2] System Call - fd function --------------------------*/
+/**
+ * @brief 주소 값이 유효한 주소 영역인지 확인
+ * @details Null 포인터 @n 매핑되지 않은 가상 메모리에 대한 포인터 @n 커널 가상 주소 공간에 대한 포인터(KERN_BASE)
+ * @param addr 
+ */
+static void 
+check_address(void *addr) {
+ 	struct thread *curr = thread_current();
+	if (!is_user_vaddr(addr) || pml4_get_page(curr -> pml4, addr) == NULL || addr == NULL) // 유저 영역인지  NULL 포인터인지 확인
+		exit(-1);
+}
 
 /**
  * @brief fd table에 해당 파일 저장, fd 생성
@@ -365,7 +383,7 @@ close (int fd){
  * @param f 새로 fd를 생성하려는 파일 객체(*file)
  * @return int 성공 시 fd, 실패 시 -1(STDERR_FILENO)
  */
-int 
+static int 
 fdt_add_fd(struct file *f) {
 	struct thread *curr = thread_current();
 	struct file **fdt = curr->fdt;
@@ -389,14 +407,13 @@ fdt_add_fd(struct file *f) {
  * @param fd 
  * @return struct file* 성공 시 찾은 fd에 대한 파일 객체, 실패 시 NULL
  */
-struct file *
+static struct file *
 fdt_get_file(int fd) {
 	struct thread *curr = thread_current();
-
-	if (fd < STDIN_FILENO || fd >= FDCOUNT_LIMIT) {
+	if (fd < STDIN_FILENO || fd >= FDCOUNT_LIMIT) { // 실패
 		return NULL;
 	}
-	return curr->fdt[fd];
+	return curr->fdt[fd]; // 성공
 }
 
 /**
@@ -404,12 +421,12 @@ fdt_get_file(int fd) {
  * @details Hanyang Univ. process_close_file 각색
  * @param fd 
  */
-void 
+static void 
 fdt_remove_fd(int fd) {
 	struct thread *curr = thread_current();
 
-	if (fd < STDIN_FILENO || fd >= FDCOUNT_LIMIT)
+	if (fd < STDIN_FILENO || fd >= FDCOUNT_LIMIT) // 실패
 		return;
 	
-	curr->fdt[fd] = NULL;
+	curr->fdt[fd] = NULL; // 성공
 }

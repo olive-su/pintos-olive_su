@@ -146,6 +146,7 @@ page_fault (struct intr_frame *f) {
 		return;
 #endif
 
+	exit(-1); // TC "bad-*" 통과를 위함(exit를 안해주면 kill로 그냥 삭제됨)
 	/* Count page faults. */
 	page_fault_cnt++;
 
