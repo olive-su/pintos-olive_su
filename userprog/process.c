@@ -102,11 +102,7 @@ process_fork (const char *name, struct intr_frame *if_ UNUSED) {
 		return TID_ERROR;
 
 	struct thread *child = get_child_process(tid);
-	// printf("@@@@@value : %d\n", *(&child -> fork_sema.value));
-	// printf("parent sema : %p\n", &curr -> fork_sema);
-	// printf("child sema : %p\n", &child -> fork_sema);
-	sema_down(&curr->fork_sema); // 자식 프로세스가 로드될 때까지 부모 프로세스는 대기한다.
-	// printf("#####value : %d\n", *(&child -> fork_sema.value));
+	sema_down(&child->fork_sema); // 자식 프로세스가 로드될 때까지 부모 프로세스는 대기한다.
 	if (child->exit_status == TID_ERROR)
 		return TID_ERROR;
 
@@ -225,7 +221,7 @@ __do_fork (void *aux) {
 	}
 
 	current->next_fd = parent->next_fd; // 부모의 next_fd를 자식의 next_fd로 옮겨준다.
-	sema_up(&parent->fork_sema); // fork가 정상적으로 완료되었으므로 현재 wait중인 parent를 다시 실행 가능 상태로 만든다. 
+	sema_up(&current->fork_sema); // fork가 정상적으로 완료되었으므로 현재 wait중인 parent를 다시 실행 가능 상태로 만든다. 
 
 	/* Finally, switch to the newly created process. */
 	/* 새로 생성된 프로세스에 대해 컨텍스트 스위치를 수행한다. */
@@ -272,10 +268,6 @@ process_exec (void *f_name) {
 		palloc_free_page (file_name);
 		return -1;
 	}
-
-	/* Initialize interrupt frame and load executable. */
-	// argument_stack(argv, argc, &_if.rsp);
-	// hex_dump(_if.rsp, _if.rsp, USER_STACK - _if.rsp, true);
 
 	argument_stack(argc, argv, &_if); // argc, argv로 커맨드 라인 파싱
 	// hex_dump(_if.rsp, _if.rsp, USER_STACK - _if.rsp, true); // 메모리에 적재된 상태 출력
