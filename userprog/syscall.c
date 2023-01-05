@@ -157,6 +157,13 @@ exit(int status) {
 	thread_exit();
 }
 
+/**
+ * @brief 부모 프로세스로 부터 자식 프로세스를 복제한다.
+ * 
+ * @param thread_name 새로 생성될 자식 프로세스의 이름
+ * @param f 부모의 인터럽트 프레임
+ * @return pid_t 생성된 자식 프로세스의 pid
+ */
 pid_t fork (const char *thread_name, struct intr_frame *f) {
 	check_address(thread_name);
 	return process_fork(thread_name, f);

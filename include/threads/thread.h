@@ -9,7 +9,7 @@
 #ifdef VM
 #include "vm/vm.h"
 #endif
-// #define USERPROG // syscall.c 파일에서 에러 뜨는 부분 방지
+#define USERPROG // syscall.c 파일에서 에러 뜨는 부분 방지
 
 /* States in a thread's life cycle. */
 enum thread_status {
@@ -129,7 +129,7 @@ struct thread {
 	struct file *running; // 현재 실행 중인 파일
 	int exit_status; // 프로세스의 종료 유무 확인
 
-	struct semaphore fork_sema; // fork가 완료될 때 
+	struct semaphore fork_sema; // fork가 완료될 때 sema_up 수행
     struct semaphore free_sema; // 자식 프로세스가 종료될 때까지 부모 프로세스는 대기
 	struct semaphore wait_sema; // 자식 프로세스가 종료될 때까지 대기. 종료 상태 저장
 	

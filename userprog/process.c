@@ -84,24 +84,33 @@ initd (void *f_name) {
 
 /* Clones the current process as `name`. Returns the new process's thread id, or
  * TID_ERROR if the thread cannot be created. */
+
+/* 현재 프로세스로 'name'이라는 이름을 가진 프로세스를 복사한다.
+ * 성공 시, 새 프로세스의 tid 반환
+ * 실패 시, TID_ERROR(-1) 반환 */
 tid_t
 process_fork (const char *name, struct intr_frame *if_ UNUSED) {
 	/* Clone current thread to new thread.*/
 
 	struct thread *curr = thread_current();
 
-	memcpy(&curr->parent_if, if_, sizeof(struct intr_frame)); // 전달받은 intr_frame을 현재 parent_if에 복사한다.
+	memcpy(&curr->parent_if, if_, sizeof(struct intr_frame)); // 전달받은 intr_frame을 parent_if필드에 복사한다.
+	// ↳ '__do_fork' 에서 자식 프로세스에 부모의 컨텍스트 정보를 복사하기 위함(부모의 인터럽트 프레임을 찾는 용도로 사용)
 
 	tid_t tid = thread_create(name, PRI_DEFAULT, __do_fork, curr); // __do_fork를 실행하는 스레드 생성, 현재 스레드를 인자로 넘겨준다.
 	if (tid == TID_ERROR)
 		return TID_ERROR;
 
 	struct thread *child = get_child_process(tid);
-	sema_down(&child->fork_sema); // wait until child loads
+	// printf("@@@@@value : %d\n", *(&child -> fork_sema.value));
+	// printf("parent sema : %p\n", &curr -> fork_sema);
+	// printf("child sema : %p\n", &child -> fork_sema);
+	sema_down(&curr->fork_sema); // 자식 프로세스가 로드될 때까지 부모 프로세스는 대기한다.
+	// printf("#####value : %d\n", *(&child -> fork_sema.value));
 	if (child->exit_status == TID_ERROR)
 		return TID_ERROR;
 
-	return tid;
+	return tid; // 부모 프로세스의 리턴값 : 생성한 자식 프로세스의 tid
 }
 
 #ifndef VM
@@ -164,20 +173,23 @@ duplicate_pte (uint64_t *pte, void *va, void *aux) {
 static void
 __do_fork (void *aux) {
 	struct intr_frame if_;
-	struct thread *parent = (struct thread *) aux;
-	struct thread *current = thread_current ();
+	struct thread *parent = (struct thread *) aux; // 부모 프로세스
+	struct thread *current = thread_current (); // 새로 생성된 자식 프로세스
 	/* TODO: somehow pass the parent_if. (i.e. process_fork()'s if_) */
+	/* TODO: process_fork의 두 번째 인자인 parent_if를 전달한다. */
 	struct intr_frame *parent_if;
 	bool succ = true;
 
 	parent_if = &parent->parent_if; // process_fork에서 복사 해두었던 intr_frame
 	/* 1. Read the cpu context to local stack. */
+	/* 1. 부모의 인터럽트 프레임을 읽어온다.(if_로 복사) */
 	memcpy (&if_, parent_if, sizeof (struct intr_frame));
 
-	if_.R.rax = 0 ; // ! if_의 리턴값을 0으로 설정한다.
+	if_.R.rax = 0; // fork 시스템 콜의 결과로 자식 프로세스는 0을 리턴해야하므로 0을 넣어준다.
 
 	/* 2. Duplicate PT */
-	current->pml4 = pml4_create();
+	/* 2. 페이지 테이블을 복제한다. */
+	current->pml4 = pml4_create(); // 부모의 pte를 복사하기 위해 페이지 테이블을 생성한다.
 	if (current->pml4 == NULL)
 		goto error;
 
@@ -187,7 +199,8 @@ __do_fork (void *aux) {
 	if (!supplemental_page_table_copy (&current->spt, &parent->spt))
 		goto error;
 #else
-	if (!pml4_for_each (parent->pml4, duplicate_pte, parent))
+	// "pml4_for_each" : Apply FUNC to each available pte entries including kernel's.
+	if (!pml4_for_each (parent->pml4, duplicate_pte, parent)) // "duplicate_pte" : 페이지 테이블을 복제하는 함수(부모 -> 자식) 
 		goto error;
 #endif
 
@@ -196,24 +209,30 @@ __do_fork (void *aux) {
 	 * TODO:       in include/filesys/file.h. Note that parent should not return
 	 * TODO:       from the fork() until this function successfully duplicates
 	 * TODO:       the resources of parent.*/
+	/*
+	 * 파일 객체를 복제하려면 'file_duplicate'를 사용하라.
+	 * 이 함수가 부모의 리소스를 성공적으로 복제할 때까지 부모 프로세스는 fork로 부터 리턴할 수 없다.
+	*/
 	if (parent->next_fd == FDCOUNT_LIMIT)
 		goto error;
 
 	// 부모의 fdt를 자식의 fdt로 복사한다.
 	for (int fd = 2; fd < FDCOUNT_LIMIT; fd++) {
 		struct file *file = parent->fdt[fd];
-		if (file == NULL)
+		if (file == NULL) // fd엔트리가 없는 상태에는 그냥 건너뛴다.
 			continue;
 		current->fdt[fd] = file_duplicate (file);
 	}
 
 	current->next_fd = parent->next_fd; // 부모의 next_fd를 자식의 next_fd로 옮겨준다.
-	sema_up(&current->fork_sema);
+	sema_up(&parent->fork_sema); // fork가 정상적으로 완료되었으므로 현재 wait중인 parent를 다시 실행 가능 상태로 만든다. 
+
 	/* Finally, switch to the newly created process. */
+	/* 새로 생성된 프로세스에 대해 컨텍스트 스위치를 수행한다. */
 	if (succ)
 		do_iret (&if_);
-error:
-	sema_up(&current->fork_sema);
+error: // 제대로 복제가 안된 상태 - TID_ERROR 리턴 
+	sema_up(&parent->fork_sema);
 	exit(TID_ERROR);
 	// thread_exit ();
 }
@@ -276,6 +295,10 @@ process_exec (void *f_name) {
  *
  * This function will be implemented in problem 2-2.  For now, it
  * does nothing. */
+/* 스레드 TID가 종료될 때까지 기다렸다가 종료 상태를 반환한다.
+ * 커널에 의해 종료된 경우(예외로 인해 종료된 경우) -1을 반환한다.
+ * TID가 잘못되었거나 TID가 호출 프로세스의 하위 프로세스가 아니거나 
+ * process_wait()이미 성공적으로 호출되었을 때, 대기하지 않고 -1을 즉시 반환한다. */
 int
 process_wait (tid_t child_tid UNUSED) {
 	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
@@ -286,10 +309,11 @@ process_wait (tid_t child_tid UNUSED) {
 	// return -1;
 	struct thread *child = get_child_process(child_tid);
 
-	if(child == NULL)
+	if(child == NULL) // 해당 자식이 존재하지 않는다면 -1 리턴
 		return -1;
 
 	sema_down(&child->wait_sema); // 자식 프로세스가 종료할 때까지 대기한다.
+	// 컨텍스트 스위칭 발생
 
 	int exit_status = child->exit_status; // 자식으로 부터 종료인자를 전달 받고 리스트에서 삭제한다.
 	list_remove(&child->child_elem);
@@ -317,7 +341,7 @@ process_exit (void) {
 	process_cleanup ();
 
 	sema_up(&curr->wait_sema); // 부모 프로세스가 자식 프로세스의 종료상태를 확인하게 한다.
-	sema_down(&curr->free_sema); // ! 부모 프로세스가 자식 프로세스의 종료인자를 받을때 까지 대기한다. 
+	sema_down(&curr->free_sema); // 부모 프로세스가 자식 프로세스의 종료 상태를 받을때 까지 대기한다. 
 }
 
 /* Free the current process's resources. */
