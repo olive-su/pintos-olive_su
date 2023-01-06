@@ -228,7 +228,7 @@ __do_fork (void *aux) {
 	if (succ)
 		do_iret (&if_);
 error: // 제대로 복제가 안된 상태 - TID_ERROR 리턴 
-	sema_up(&parent->fork_sema);
+	sema_up(&current->fork_sema);
 	exit(TID_ERROR);
 	// thread_exit ();
 }

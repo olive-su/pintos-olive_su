@@ -26,7 +26,7 @@ void get_argument(void *rsp, int argc, void *argv[]);
 void halt (void);
 void exit (int status);
 pid_t fork (const char *thread_name, struct intr_frame *f);
-int exec (const char *cmd_line);
+int exec (const char *file);
 int wait (tid_t pid);
 bool create (const char *file, unsigned initial_size);
 bool remove (const char *file);
@@ -175,15 +175,15 @@ pid_t fork (const char *thread_name, struct intr_frame *f) {
  * @param file 실행하려는 파일 이름
  * @return int 성공 시 0, 실패 시 -1
  */
-int exec (const char *cmd_line){
-	check_address(cmd_line);
+int exec (const char *file){
+	check_address(file);
 
-	int size = strlen(cmd_line) + 1; // 파일 사이즈(NULL 포함하기 위해 +1)
+	int size = strlen(file) + 1; // 파일 사이즈(NULL 포함하기 위해 +1)
 	char *fn_copy = palloc_get_page(PAL_ZERO);
 
 	if (fn_copy == NULL)// 메모리 할당 불가 시
 		exit(-1);
-	strlcpy(fn_copy, cmd_line, size);
+	strlcpy(fn_copy, file, size);
 
 	if (process_exec(fn_copy) == -1) // [process_exec] 'load (file_name, &_if);' -> load 실패 시
 		return -1;
