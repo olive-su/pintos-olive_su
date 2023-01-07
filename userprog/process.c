@@ -310,7 +310,7 @@ process_wait (tid_t child_tid UNUSED) {
 	int exit_status = child->exit_status; // 자식으로 부터 종료인자를 전달 받고 리스트에서 삭제한다.
 	list_remove(&child->child_elem);
 	
-	sema_up(&child->free_sema); // 자식 프로세스 종료 상태를 받은 후 자식 프로세스를 종료하게 한다.
+	// sema_up(&child->free_sema); // 자식 프로세스 종료 상태를 받은 후 자식 프로세스를 종료하게 한다.
 
 	return exit_status;
 }
@@ -333,7 +333,8 @@ process_exit (void) {
 	process_cleanup ();
 
 	sema_up(&curr->wait_sema); // 부모 프로세스가 자식 프로세스의 종료상태를 확인하게 한다.
-	sema_down(&curr->free_sema); // 부모 프로세스가 자식 프로세스의 종료 상태를 받을때 까지 대기한다. 
+	thread_sleep(300);
+	// sema_down(&curr->free_sema); // 부모 프로세스가 자식 프로세스의 종료 상태를 받을때 까지 대기한다. 
 }
 
 /* Free the current process's resources. */
