@@ -256,6 +256,10 @@ process_exec (void *f_name) {
 	/* We first kill the current context */
 	process_cleanup ();
 
+	#ifdef VM
+		supplemental_page_table_init(&thread_current() -> spt);
+	#endif
+
 	/* 커맨드 라인을 파싱한다. */
 	argument_parse(file_name, &argc, argv);
 
@@ -698,12 +702,37 @@ install_page (void *upage, void *kpage, bool writable) {
 /* From here, codes will be used after project 3.
  * If you want to implement the function for only project 2, implement it on the
  * upper block. */
+/*================================ Project 3 ======================================*/
 
 static bool
 lazy_load_segment (struct page *page, void *aux) {
+	if (page == NULL) // 페이지 주소에 대한 유효성 검증
+		return false;
+
 	/* TODO: Load the segment from the file */
+	// 인자로 넘긴 aux에 대한 encapsulation을 진행한다.
+	struct segment_aux* segment_aux = (struct segment_aux *) aux;
+
+	struct file *file = ((struct segment_aux *)aux) -> file;
+	off_t offset = ((struct segment_aux *)aux) -> offset;
+	size_t page_read_bytes = ((struct segment_aux *)aux) -> page_read_bytes;
+    size_t page_zero_bytes = PGSIZE - page_read_bytes;
+
 	/* TODO: This called when the first page fault occurs on address VA. */
+	file_seek(file, offset); // 파일의 오프셋을 설정한다.
+
+	// file_read : 읽어온 바이트 수를 리턴
+	// 만약 읽어온 바이트 수가 page_readbytes 와 다르다면 false
+    if (file_read(file, page->frame->kva, page_read_bytes) != (int)page_read_bytes) { // 파일을 읽어온다.
+		palloc_free_page(page->frame->kva);
+        return false;
+    }
+
 	/* TODO: VA is available when calling this function. */
+	// 페이지에 대한 초기화 작업 수행
+    memset(page->frame->kva + page_read_bytes, 0, page_zero_bytes);
+
+    return true;
 }
 
 /* Loads a segment starting at offset OFS in FILE at address
@@ -720,6 +749,18 @@ lazy_load_segment (struct page *page, void *aux) {
  *
  * Return true if successful, false if a memory allocation error
  * or disk read error occurs. */
+
+/* 파일의 UPAGE(유저 가상 페이지)주소에서부터 OFS 오프셋에서 시작하는 세그먼트를 로드한다.
+ * 가상 메모리의 READ_BYTES + ZERO_BYTES는 다음과 같이 초기화된다.
+ * 
+ * - UPPAGE의 READ_BYTES는 오프셋 OFS에서 시작하는 FILE에서 읽어야 한다.
+ * - ZERO_BYTES(UPAGE + READ_BYTES)는 반드시 0이어야 한다.
+ * 
+ * 해당 함수로 초기화된 페이지는 반드시 유저 프로세스에 의해 쓰기가 가능해야 하며, 
+ * 그렇지 않은 경우는 read-only여야한다.
+ * 
+ * 성공하면 true를 리턴하고 만약 메모리 할당 에러 또는 디스크 읽기 오류 발생시,
+ * false를 리턴한다. */
 static bool
 load_segment (struct file *file, off_t ofs, uint8_t *upage,
 		uint32_t read_bytes, uint32_t zero_bytes, bool writable) {
@@ -735,7 +776,15 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 		size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
 		/* TODO: Set up aux to pass information to the lazy_load_segment. */
-		void *aux = NULL;
+		/* TODO: lazy_load_segment에 정보를 전달하도록 aux를 설정한다. */
+		struct segment_aux *aux = (struct segment_aux *)malloc(sizeof(struct segment_aux));
+		aux->file = file; // 세그먼트를 읽어올 파일
+		aux->offset = ofs; // 시작 오프셋
+		aux->page_read_bytes = page_read_bytes; // 총 읽어올 바이트
+
+		// 이후, lazy_load_segment로 aux값을 넘겨준다.
+		
+		ofs += page_read_bytes;
 		if (!vm_alloc_page_with_initializer (VM_ANON, upage,
 					writable, lazy_load_segment, aux))
 			return false;
@@ -752,13 +801,23 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 static bool
 setup_stack (struct intr_frame *if_) {
 	bool success = false;
-	void *stack_bottom = (void *) (((uint8_t *) USER_STACK) - PGSIZE);
+	void *stack_bottom = (void *) (((uint8_t *) USER_STACK) - PGSIZE); 
+	// 스택은 아래로 커지니까 새로 추가하려는 페이지 사이즈 만큼 빼준 뒤, 해당 공간으로부터 페이지를 할당한다.
+	// ↳ [Ref. Gitbook Project 2 - Introduction]
 
 	/* TODO: Map the stack on stack_bottom and claim the page immediately.
 	 * TODO: If success, set the rsp accordingly.
 	 * TODO: You should mark the page is stack. */
 	/* TODO: Your code goes here */
+	if (vm_alloc_page(VM_ANON | VM_MARKER_0, stack_bottom, 1)) { // = vm_alloc_page_with_initializer ((type), (upage), (writable), NULL, NULL)
+		// ↳ 1(true)이면 writable
+		success = vm_claim_page(stack_bottom); // 페이지와 프레임 매핑
 
+		if (success) {
+			if_->rsp = USER_STACK; // 스택을 위한 공간 할당했으니까 rsp 위치 지정
+			thread_current()->stack_bottom = stack_bottom; // stack_bottom 지정
+		}
+    }
 	return success;
 }
 #endif /* VM */

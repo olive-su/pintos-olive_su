@@ -9,7 +9,8 @@
 #ifdef VM
 #include "vm/vm.h"
 #endif
-// #define USERPROG // syscall.c 파일에서 에러 뜨는 부분 방지
+#define USERPROG // syscall.c 파일에서 에러 뜨는 부분 방지
+#define VM // vm.c 파일에서 에러 뜨는 부분 방지
 
 /* States in a thread's life cycle. */
 enum thread_status {
@@ -137,7 +138,10 @@ struct thread {
 #endif
 #ifdef VM
 	/* Table for whole virtual memory owned by thread. */
+	/* KAIST 15p. hash vm */
 	struct supplemental_page_table spt;
+	void *stack_bottom;
+	void *rsp_stack;
 #endif
 
 	/* Owned by thread.c. */

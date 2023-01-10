@@ -88,6 +88,8 @@ hash_destroy (struct hash *h, hash_action_func *destructor) {
    no equal element is already in the table.
    If an equal element is already in the table, returns it
    without inserting NEW. */
+/* 테이블에 동일한 요소가 없는 경우 해시 테이블 H에 NEW를 삽입하고 null 포인터를 반환한다.
+   테이블에 동일한 요소가 이미 있으면 NEW를 삽입하지 않고 반환한다. */
 struct hash_elem *
 hash_insert (struct hash *h, struct hash_elem *new) {
 	struct list *bucket = find_bucket (h, new);
