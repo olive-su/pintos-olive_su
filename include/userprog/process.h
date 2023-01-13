@@ -11,10 +11,14 @@ int process_wait (tid_t);
 void process_exit (void);
 void process_activate (struct thread *next);
 
+/*-------------------------[P3]Anonoymous page---------------------------------*/
 struct segment_aux {
     struct file *file;
     off_t offset;
     size_t page_read_bytes;
 };
+
+bool setup_stack (struct intr_frame *if_);
+/*-------------------------[P3]Anonoymous page---------------------------------*/
 
 #endif /* userprog/process.h */

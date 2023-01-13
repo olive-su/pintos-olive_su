@@ -138,10 +138,12 @@ struct thread {
 #endif
 #ifdef VM
 	/* Table for whole virtual memory owned by thread. */
+	/*-------------------------[P3]Anonoymous page---------------------------------*/
 	/* KAIST 15p. hash vm */
 	struct supplemental_page_table spt;
 	void *stack_bottom;
 	void *rsp_stack;
+	/*-------------------------[P3]Anonoymous page---------------------------------*/
 #endif
 
 	/* Owned by thread.c. */

@@ -15,6 +15,7 @@
 #include "threads/palloc.h" 	// palloc_get_page
 #include "lib/stdio.h" 			// predefined fd
 #include "threads/synch.h" 		// lock
+#include "vm/vm.h" 				// spt_find_page
 
 typedef int pid_t; // #include "lib/user/syscall.h" -> type conflict 발생으로 인한 재정의
 
@@ -39,11 +40,18 @@ unsigned tell (int fd);
 void close (int fd);
 
 /*------------------------- [P2] System Call - help function --------------------------*/
-static void check_address(void *addr);
 static int fdt_add_fd(struct file *f); 
 static struct file *fdt_get_file(int fd); 
 static void fdt_remove_fd(int fd);
 
+#ifndef VM
+static void check_address(void *addr);
+#endif
+/*------------------------- [P3] Anon --------------------------*/
+#ifdef VM
+struct page* check_address(void *addr); // [P3] Anon  
+static void check_buffer(void*, unsigned, bool);
+#endif
 /* System call.
  *
  * Previously system call services was handled by the interrupt handler
@@ -79,6 +87,9 @@ void
 syscall_handler (struct intr_frame *f UNUSED) {
 	// TODO: Your implementation goes here.
 	struct thread *curr = thread_current();
+	#ifdef VM
+		curr->rsp_stack = f->rsp;
+    #endif
 
 	switch (f->R.rax) // 시스템 콜 번호에 따라 분기
 	{
@@ -111,9 +122,11 @@ syscall_handler (struct intr_frame *f UNUSED) {
 		f->R.rax = filesize (f->R.rdi);
 		break;
 	case SYS_READ:
+		check_buffer(f->R.rsi, f->R.rdx, 0);
 		f->R.rax = read (f->R.rdi, f->R.rsi, f->R.rdx);
 		break;
 	case SYS_WRITE:
+		check_buffer(f->R.rsi, f->R.rdx, 1);
 		f->R.rax = write (f->R.rdi, f->R.rsi, f->R.rdx);
 		break;
 	case SYS_SEEK:
@@ -277,7 +290,7 @@ filesize (int fd){
  */
 int 
 read(int fd, void *buffer, unsigned size) {
-	check_address(buffer);
+	// check_address(buffer);
 	int read_bytes = -1;
 
 	if(fd == STDIN_FILENO){ // fd 0 reads from the keyboard using input_getc()._gitbook
@@ -315,7 +328,7 @@ read(int fd, void *buffer, unsigned size) {
  */
 int
 write (int fd, const void *buffer, unsigned size) {
-	check_address(buffer);
+	// check_address(buffer);
 	int write_bytes = -1;
 
 	if (fd == STDOUT_FILENO){
@@ -389,10 +402,32 @@ close (int fd){
  * @details Null 포인터 @n 매핑되지 않은 가상 메모리에 대한 포인터 @n 커널 가상 주소 공간에 대한 포인터(KERN_BASE)
  * @param addr 
  */
+#ifndef VM
 static void 
 check_address(void *addr) {
  	struct thread *curr = thread_current();
 	if (!is_user_vaddr(addr) || pml4_get_page(curr -> pml4, addr) == NULL || addr == NULL) // 유저 영역인지  NULL 포인터인지 확인
+		exit(-1);
+}
+#endif
+
+#ifdef VM
+struct page* check_address(void *addr){
+
+    struct thread *curr = thread_current();
+    if (addr == NULL || is_kernel_vaddr(addr))
+        exit(-1);
+	return spt_find_page(&curr->spt, addr);
+}
+#endif
+
+// buffer + size 크기가 한 페이지(4kb)의 크기를 넘는 경우에 대한 처리
+static void
+check_buffer(void* buffer, unsigned size, bool writable) {
+	struct page* page = check_address(buffer + size);
+	if(page == NULL)
+		exit(-1);
+	if(!writable && page->writable == false) // true : writable, false : read-only
 		exit(-1);
 }
 

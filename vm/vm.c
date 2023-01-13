@@ -5,7 +5,8 @@
 #include "vm/inspect.h"
 
 #include "threads/vaddr.h"
-
+#include "threads/mmu.h"
+#include "userprog/process.h"
 
 /*-------------------------[P3]frame table---------------------------------*/
 static struct list frame_table;
@@ -15,6 +16,7 @@ static unsigned hash_func (const struct hash_elem *e, void *aux UNUSED); // Impl
 static unsigned less_func(const struct hash_elem *a, const struct hash_elem *b, void *aux); // Implement hash_less_func
 static bool insert_page(struct hash *h, struct page *p);
 static bool delete_page(struct hash *h, struct page *p);
+static void destructor(struct hash_elem *e, void* aux);
 
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
@@ -35,6 +37,7 @@ vm_init (void) {
 /* Get the type of the page. This function is useful if you want to know the
  * type of the page after it will be initialized.
  * This function is fully implemented now. */
+/* 초기화된 이후의 페이지 타입을 알기 위해 사용한다. */
 enum vm_type
 page_get_type (struct page *page) {
 	int ty = VM_TYPE (page->operations->type);
@@ -68,42 +71,42 @@ static struct frame *vm_evict_frame (void);
 
 bool
 vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable, vm_initializer *init, void *aux) 
+// ↳ page type, page의 가상주소?, write 가능여부, page를 실제로 올릴때 실행하는 함수(vm_initializer), vm_initializer함수의 실행시에 넘겨주는 인자
 {
-
 	ASSERT (VM_TYPE(type) != VM_UNINIT) // vm_type은 VM_ANON과 VM_FILE만 가능하다.
 
 	struct supplemental_page_table *spt = &thread_current ()->spt;
 
+
 	/* Check wheter the upage is already occupied or not. */
 	if (spt_find_page (spt, upage) == NULL) {
-	// ↳ upage라는 가상 메모리에 매핑되는 페이지 존재 x -> 새로 만들어야함
+		// ↳ upage라는 가상 메모리에 매핑되는 페이지 존재 x -> 새로 만들어야함
 		/* TODO: Create the page, fetch the initialier according to the VM type,
 		 * TODO: and then create "uninit" page struct by calling uninit_new. You
 		 * TODO: should modify the field after calling the uninit_new. 
 		 * 페이지를 만들고 vm유형에 따라 이니셜을 가져온 다음 uninit_new를 호출하여 uninit 페이지 구조를 만듦
 		 * uninit_new를 호출한 후 필드를 수정해야 함*/
+		/*-------------------------[P3]Anonoymous page---------------------------------*/
+		struct page* pg = calloc(sizeof(struct page), sizeof(struct page)); // !
 
-		struct page* page = (struct page*)malloc(sizeof(struct page));
-		
 		// 페이지 타입에 따라 initializer가 될 초기화 함수를 매칭해준다.
-        typedef bool (*initializer_by_type)(struct page *, enum vm_type, void *);
+		typedef bool (*initializer_by_type)(struct page *, enum vm_type, void *);
         initializer_by_type initializer = NULL;
 
-		// switch-case 문 : VM_TYPE 이 enum이므로
-        switch(VM_TYPE(type)) { // 페이지 타입에 따라 initiailizer를 설정한다.
-            case VM_ANON:
-                initializer = anon_initializer;
-                break;
-            case VM_FILE:
-                initializer = file_backed_initializer;
-                break;
-		}
-
-        uninit_new(page, upage, init, type, aux, initializer); // UNINIT 페이지 생성
-        page->writable = writable; // page의 w/r 여부
+		if(VM_TYPE(type) == VM_ANON)
+			initializer = anon_initializer;
+		else if(VM_TYPE(type) == VM_FILE)
+			initializer = file_backed_initializer;
+		
+		uninit_new(pg, upage, init, type, aux, initializer); // UNINIT 페이지 생성
+		// ↳ page를 uninit으로 만들어서 spt에 올려두는 과정(실제 type을 올림)
+		// page 구조체의 pg,upage: 주소, init: lazy_load, type: 타입, initializer: 타입에 따른 함수(anon_initializer 또는 file_backed_initializer)
 
 		/* TODO: Insert the page into the spt. */
-		return spt_insert_page(spt, page); // 새로 만든 페이지를 spt에 삽입한다.
+		pg->writable = writable;
+		spt_insert_page(spt, pg);
+		return true;
+		/*-------------------------[P3]Anonoymous page---------------------------------*/
 	}
 err:
 	return false;
@@ -335,9 +338,46 @@ supplemental_page_table_init (struct supplemental_page_table *spt UNUSED) {
 }
 
 /* Copy supplemental page table from src to dst */
+// src spt 로 부터 dst spt로 보조 페이지 테이블을 복사한다.
 bool
 supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
 		struct supplemental_page_table *src UNUSED) {
+	struct thread *curr = thread_current(); // (현재 실행중인)자식 프로세스
+
+	struct hash_iterator i; // 부모의 해쉬 테이블을 순회하기 위한 iterator
+    hash_first (&i, &src->spt_hash);
+    while (hash_next (&i)) {
+        struct page *parent_page = hash_entry (hash_cur (&i), struct page, hash_elem); // 복사하려는 부모 페이지
+        enum vm_type parent_type = parent_page->operations->type; // 부모 페이지의 타입에 따라 조건문을 분기한다.
+
+		// CASE 1. UNINIT 페이지인 경우 -> ANON 또는 FILE로 페이지 타입 결정
+		// ↳ 페이지만
+        if(parent_type == VM_UNINIT){
+            if(!vm_alloc_page_with_initializer(parent_page->uninit.type, parent_page->va, \
+				parent_page->writable, parent_page->uninit.init, parent_page->uninit.aux))
+                return false;
+		}
+		// CASE 2. UNINIT 페이지가 아닌 경우
+		// ↳ 페이지 + 프레임
+        else { 
+			// CASE 2-1. 스택 페이지인 경우, 자식 프로세스에게도 스택 설정을 해줌
+			// setup_stack : 페이지 할당 + 프레임 할당 + stack_bottom 설정
+			if (parent_type & VM_MARKER_0)
+				setup_stack(&thread_current()->tf); // setup_stack's param : intr_frame
+			// CASE 2-2. 스택 페이지 이외의 경우
+			// 페이지 할당 + 프레임 할당
+			else
+				if(!vm_alloc_page(parent_type, parent_page->va, parent_page->writable)) // 페이지 할당
+					return false;
+				if(!vm_claim_page(parent_page->va)) // 프레임 할당
+					return false;
+			
+			// 부모의 프레임을 자식 프레임으로 복사한다.
+            struct page* child_page = spt_find_page(dst, parent_page->va);
+            memcpy(child_page->frame->kva, parent_page->frame->kva, PGSIZE); // 부모 프레임 그대로 복사
+		}
+    }
+    return true;
 }
 
 /* Free the resource hold by the supplemental page table */
@@ -345,6 +385,10 @@ void
 supplemental_page_table_kill (struct supplemental_page_table *spt UNUSED) {
 	/* TODO: Destroy all the supplemental_page_table hold by thread and
 	 * TODO: writeback all the modified contents to the storage. */
+	/* TODO: 스레드별로 소유하고 있는 모든 spt를 삭제하고 수정된 모든 내용을 저장소에 다시 기록
+	*/
+	// hash 엔트리 각각에 대해 메모리를 해제한다.
+    hash_destroy(&spt->spt_hash, destructor);
 }
 
 /*-------------------------[P3]hash table---------------------------------*/
@@ -395,5 +439,11 @@ delete_page(struct hash *h, struct page *p) {
 		return true;
 	else
 		return false;
+}
+
+static void
+destructor(struct hash_elem *e, void* aux) {
+    const struct page *p = hash_entry(e, struct page, hash_elem);
+    free(p);
 }
 /*-------------------------[P3]hash table---------------------------------*/

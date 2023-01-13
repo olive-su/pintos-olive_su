@@ -31,6 +31,8 @@ anon_initializer (struct page *page, enum vm_type type, void *kva) {
 	page->operations = &anon_ops;
 
 	struct anon_page *anon_page = &page->anon;
+
+	return true;
 }
 
 /* Swap in the page by read contents from the swap disk. */
@@ -48,5 +50,8 @@ anon_swap_out (struct page *page) {
 /* Destroy the anonymous page. PAGE will be freed by the caller. */
 static void
 anon_destroy (struct page *page) {
+	// 물리 메모리(프레임)가 존재하지 않는다면 anon 페이지 지정이 불가하므로 그냥 리턴한다.
+	if(&page->frame != NULL)
+		return;
 	struct anon_page *anon_page = &page->anon;
 }
