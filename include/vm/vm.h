@@ -62,6 +62,7 @@ struct page {
 
 	/* Per-type data are binded into the union.
 	 * Each function automatically detects the current union */
+	// page type에 맞는 구조체 형식을 가질 수 있도록 정의
 	union {
 		struct uninit_page uninit;
 		struct anon_page anon;
@@ -90,6 +91,11 @@ struct frame {
  * This is one way of implementing "interface" in C.
  * Put the table of "method" into the struct's member, and
  * call it whenever you needed. */
+/*
+ * 함수 포인터들과 type 멤버로 이루어져 있음
+ * swap in,swap out,destroy를 사용할 때 해당 page의 타입에 따라 구조체로 정의된 함수를 사용하도록 구성
+ * page type에 따라 구조체, 사용함수를 구분해 놓는 목적
+*/
 struct page_operations {
 	bool (*swap_in) (struct page *, void *);
 	bool (*swap_out) (struct page *);

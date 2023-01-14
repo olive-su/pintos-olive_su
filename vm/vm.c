@@ -16,7 +16,7 @@ static unsigned hash_func (const struct hash_elem *e, void *aux UNUSED); // Impl
 static unsigned less_func(const struct hash_elem *a, const struct hash_elem *b, void *aux); // Implement hash_less_func
 static bool insert_page(struct hash *h, struct page *p);
 static bool delete_page(struct hash *h, struct page *p);
-static void destructor(struct hash_elem *e, void* aux);
+static void spt_destroy(struct hash_elem *e, void* aux);
 
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
@@ -38,6 +38,7 @@ vm_init (void) {
  * type of the page after it will be initialized.
  * This function is fully implemented now. */
 /* 초기화된 이후의 페이지 타입을 알기 위해 사용한다. */
+// 페이지 유형을 가져옴 - 초기화된 후 페이지 유형을 알고 싶은 경우 유용(구현은 완료됨)
 enum vm_type
 page_get_type (struct page *page) {
 	int ty = VM_TYPE (page->operations->type);
@@ -77,17 +78,16 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable, v
 
 	struct supplemental_page_table *spt = &thread_current ()->spt;
 
-
 	/* Check wheter the upage is already occupied or not. */
 	if (spt_find_page (spt, upage) == NULL) {
-		// ↳ upage라는 가상 메모리에 매핑되는 페이지 존재 x -> 새로 만들어야함
+	// ↳ upage라는 가상 메모리에 매핑되는 페이지 존재 x -> 새로 만들어야함
 		/* TODO: Create the page, fetch the initialier according to the VM type,
 		 * TODO: and then create "uninit" page struct by calling uninit_new. You
 		 * TODO: should modify the field after calling the uninit_new. 
 		 * 페이지를 만들고 vm유형에 따라 이니셜을 가져온 다음 uninit_new를 호출하여 uninit 페이지 구조를 만듦
 		 * uninit_new를 호출한 후 필드를 수정해야 함*/
 		/*-------------------------[P3]Anonoymous page---------------------------------*/
-		struct page* pg = calloc(sizeof(struct page), sizeof(struct page)); // !
+		struct page* pg = calloc(sizeof(struct page), sizeof(struct page)); // ! malloc -> calloc
 
 		// 페이지 타입에 따라 initializer가 될 초기화 함수를 매칭해준다.
 		typedef bool (*initializer_by_type)(struct page *, enum vm_type, void *);
@@ -219,21 +219,12 @@ vm_get_frame (void) { //프레임 할당
 	/* TODO: Fill this function. */
 	/*-------------------------[P3]frame table---------------------------------*/
 	// struct frame *frame = NULL;
-	// void *kva = palloc_get_page(PAL_USER); // 사용가능한 단일 페이지(물리적 페이지)를 가져옴 - PAL_USER : 페이지를 사용자 풀에서 가져옴, 그 외에는 커널 풀에서 가져옴
-
-	// if (kva == NULL) { // NULL이면 palloc으로 가져올수 있는 페이지가 없다는 것
-	// 	frame = vm_evict_frame(); // 페이지 삭제 후 frame 리턴
-	// }
-	// else {
-	// 	frame = malloc(sizeof(struct frame));
-	// 	frame->kva = kva;
-	// }
 
 	struct frame *frame = (struct frame*)malloc(sizeof(struct frame)); 
 	// frame 구조체를 위한 공간 할당한다.(작으므로 malloc으로 _Gitbook Memory Allocation 참조)
 
 	frame->kva = palloc_get_page(PAL_USER); 
-	// 유저 풀(실제 메모리)로부터 페이지 하나를 가져온다. 
+	// 사용 가능한 단일 페이지(물리적 페이지)를 가져온다. 
 	// ↳ 사용 가능한 페이지가 없을 경우, NULL 리턴
     if(frame->kva == NULL) { // 사용 가능한 페이지가 없는 경우
         frame = vm_evict_frame(); // swap out 수행 (frame을 내쫓고 해당 공간을 가져온다.)
@@ -252,6 +243,17 @@ vm_get_frame (void) { //프레임 할당
 /* Growing the stack. */
 static void
 vm_stack_growth (void *addr UNUSED) {
+	/* vm_try_handler 수정해서 stack growth인 경우 함수를 호출하도록 처리
+	   0. 증가 시점 : 할당해주지 않은 페이지에 rsp가 접근했을 때 : stack growth에 대한 page_fault 발생시
+	   1. stack_bottom 설정
+	   2. 확장 요청한 스택 사이즈 확인
+	   3. 스택 확장시, page 크기 단위로 해주기
+	   4. 확장한 페이지 할당 받기 
+	   * 커널에서 페이지 폴트 발생시, intr_frame 내의 rsp는 유저스택 포인터가 아닌 쓰레기 값을 가짐 -> 커널에서 발생시 유저 스택 포인터를 thread 구조체에 저장*/ 
+	if(vm_alloc_page(VM_ANON | VM_MARKER_0, addr, 1)) { // 스택 마커 다시 표시
+		vm_claim_page(addr); // 페이지, 프레임 연결
+		thread_current()->stack_bottom -= PGSIZE; // 증가된 스택 사이즈 만큼 stack_bottom 옮겨주기
+	}
 }
 
 /* Handle the fault on write_protected page */
@@ -263,26 +265,42 @@ vm_handle_wp (struct page *page UNUSED) {
 bool
 vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
 		bool user UNUSED, bool write UNUSED, bool not_present UNUSED) {
+
 	struct supplemental_page_table *spt UNUSED = &thread_current ()->spt;
+	static void *STACK_MINIMUM_ADDR = USER_STACK - (1 << 20); // 스택 최대 크기(주소 하한선) -> 1MB
+	// ↳ 스택은 아래로 증가하기 때문 (Ref. Gitbook)
 	// struct page *page = NULL;
 	/* TODO: Validate the fault */
 	/* TODO: Your code goes here */
 	
 	/* page_fault로 부터 넘어온 인자
-	 * not_present : 페이지 존재 x (bogus fault)
-	 * user : 유저에 의한 접근(true), 커널에 의한 접근(false)
+	 * f : 페이지 폴트 발생 순간의 레지스터 값들을 담고 있는 구조체
+	 * addr : 페이지 폴트를 일으킨 가상주소
+	 * not_present : 페이지 존재 x (bogus fault), false인 경우 read-only페이지에 write하려는 상황
+	 * user : 유저에 의한 접근(true), 커널에 의한 접근(false) - rsp 값이 유저 영역인지 커널영역인지
 	 * write : 쓰기 목적 접근(true), 읽기 목적 접근(false)
 	*/
 	// ! Stack Growth 에서 다시 보기
 	// page fault 주소에 대한 유효성 검증
 	// 커널 가상 주소 공간에 대한 폴트 처리 불가, 사용자 요청에 대한 폴트 처리 불가
 	if (is_kernel_vaddr (addr) && user) // real fault
+	
 		return false;
 
-    void *rsp_stack = is_kernel_vaddr(f->rsp) ? thread_current()->rsp_stack : f->rsp;
+	// f->rsp가 커널 주소라면 rsp_stack, 아니면 f->rsp
+	// 페이지 폴트가 발생한 스택 포인터 유저 스택인지, 커널 스택인지 확인하는 과정
+	// CHECK origin_code : is_kernel_vaddr(f->rsp) ? thread_current()->rsp_stack : f->rsp;
+    void *rsp_stack = f->rsp;
     if (not_present){
-        if (!vm_claim_page(addr)) return false;
-        else return true;
+        if (!vm_claim_page(addr)){ // 스택을 증가 시켜야하는 경우, 즉 spt에 현재 할당된 스택 영역을 넘거가는 경우
+			if (rsp_stack - sizeof(void*) <= addr && STACK_MINIMUM_ADDR <= addr && addr <= USER_STACK) {
+				vm_stack_growth(thread_current()->stack_bottom - PGSIZE);
+				return true;
+			}
+			return false;
+		}
+		else
+			return true;
     }
 	
 	// return vm_do_claim_page (page);
@@ -378,7 +396,7 @@ supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
 		}
     }
     return true;
-}
+}	
 
 /* Free the resource hold by the supplemental page table */
 void
@@ -388,7 +406,10 @@ supplemental_page_table_kill (struct supplemental_page_table *spt UNUSED) {
 	/* TODO: 스레드별로 소유하고 있는 모든 spt를 삭제하고 수정된 모든 내용을 저장소에 다시 기록
 	*/
 	// hash 엔트리 각각에 대해 메모리를 해제한다.
-    hash_destroy(&spt->spt_hash, destructor);
+	if (&spt->spt_hash == NULL)
+		return;
+	hash_destroy(&spt->spt_hash, spt_destroy);
+
 }
 
 /*-------------------------[P3]hash table---------------------------------*/
@@ -442,7 +463,7 @@ delete_page(struct hash *h, struct page *p) {
 }
 
 static void
-destructor(struct hash_elem *e, void* aux) {
+spt_destroy(struct hash_elem *e, void* aux) {
     const struct page *p = hash_entry(e, struct page, hash_elem);
     free(p);
 }

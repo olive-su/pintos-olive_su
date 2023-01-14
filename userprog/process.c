@@ -71,9 +71,10 @@ process_create_initd (const char *file_name) {
 /* A thread function that launches first user process. */
 static void
 initd (void *f_name) {
-#ifdef VM
-	supplemental_page_table_init (&thread_current ()->spt);
-#endif
+// CHECK [process_exec -> supplemental_page_table_init]의 중복 선언으로 인한 코드 제거
+// #ifdef VM
+// 	supplemental_page_table_init (&thread_current ()->spt);
+// #endif
 
 	process_init ();
 
