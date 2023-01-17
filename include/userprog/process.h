@@ -19,6 +19,7 @@ struct segment_aux {
 };
 
 bool setup_stack (struct intr_frame *if_);
+bool lazy_load_segment (struct page *page, void *aux);
 /*-------------------------[P3]Anonoymous page---------------------------------*/
 
 #endif /* userprog/process.h */

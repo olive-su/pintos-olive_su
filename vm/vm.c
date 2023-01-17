@@ -87,7 +87,7 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable, v
 		 * 페이지를 만들고 vm유형에 따라 이니셜을 가져온 다음 uninit_new를 호출하여 uninit 페이지 구조를 만듦
 		 * uninit_new를 호출한 후 필드를 수정해야 함*/
 		/*-------------------------[P3]Anonoymous page---------------------------------*/
-		struct page* pg = calloc(sizeof(struct page), sizeof(struct page)); // ! malloc -> calloc
+		struct page* pg = calloc(1, sizeof(struct page)); // ! malloc -> calloc
 
 		// 페이지 타입에 따라 initializer가 될 초기화 함수를 매칭해준다.
 		typedef bool (*initializer_by_type)(struct page *, enum vm_type, void *);
@@ -280,11 +280,9 @@ vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
 	 * user : 유저에 의한 접근(true), 커널에 의한 접근(false) - rsp 값이 유저 영역인지 커널영역인지
 	 * write : 쓰기 목적 접근(true), 읽기 목적 접근(false)
 	*/
-	// ! Stack Growth 에서 다시 보기
 	// page fault 주소에 대한 유효성 검증
 	// 커널 가상 주소 공간에 대한 폴트 처리 불가, 사용자 요청에 대한 폴트 처리 불가
 	if (is_kernel_vaddr (addr) && user) // real fault
-	
 		return false;
 
 	// f->rsp가 커널 주소라면 rsp_stack, 아니면 f->rsp
@@ -293,7 +291,7 @@ vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
     void *rsp_stack = f->rsp;
     if (not_present){
         if (!vm_claim_page(addr)){ // 스택을 증가 시켜야하는 경우, 즉 spt에 현재 할당된 스택 영역을 넘거가는 경우
-			if (rsp_stack - sizeof(void*) <= addr && STACK_MINIMUM_ADDR <= addr && addr <= USER_STACK) {
+			if (rsp_stack - sizeof(void*) == addr && STACK_MINIMUM_ADDR <= addr && addr <= USER_STACK) {
 				vm_stack_growth(thread_current()->stack_bottom - PGSIZE);
 				return true;
 			}
@@ -302,8 +300,6 @@ vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
 		else
 			return true;
     }
-	
-	// return vm_do_claim_page (page);
 	return false;
 }
 
@@ -405,10 +401,30 @@ supplemental_page_table_kill (struct supplemental_page_table *spt UNUSED) {
 	 * TODO: writeback all the modified contents to the storage. */
 	/* TODO: 스레드별로 소유하고 있는 모든 spt를 삭제하고 수정된 모든 내용을 저장소에 다시 기록
 	*/
+	/*-------------------------[P3]Anonymous---------------------------------*/
 	// hash 엔트리 각각에 대해 메모리를 해제한다.
+	// if (&spt->spt_hash == NULL)
+	// 	return;
+	// hash_destroy(&spt->spt_hash, spt_destroy);
+	/*-------------------------[P3]Anonymous---------------------------------*/
+
+	/*-------------------------[P3]mmf---------------------------------*/
+	// VM_FILE 타입 추가에 따른 exit -> 'mmap va'제거 수행
+	struct hash_iterator i;
+
 	if (&spt->spt_hash == NULL)
 		return;
-	hash_destroy(&spt->spt_hash, spt_destroy);
+
+    hash_first (&i, &spt->spt_hash);
+	while (hash_next (&i)) {
+        struct page *page = hash_entry (hash_cur (&i), struct page, hash_elem);
+
+        if (page_get_type(page) == VM_FILE)
+            do_munmap(page->va);
+			
+    }
+    hash_destroy(&spt->spt_hash, spt_destroy);
+	/*-------------------------[P3]mmf---------------------------------*/
 
 }
 

@@ -340,7 +340,7 @@ process_exit (void) {
 	process_cleanup ();
 
 	sema_up(&curr->wait_sema); // 부모 프로세스가 자식 프로세스의 종료상태를 확인하게 한다.
-	thread_sleep(300);
+	thread_sleep(500);
 	// sema_down(&curr->free_sema); // 부모 프로세스가 자식 프로세스의 종료 상태를 받을때 까지 대기한다. 
 }
 
@@ -350,7 +350,8 @@ process_cleanup (void) {
 	struct thread *curr = thread_current ();
 
 #ifdef VM
-	supplemental_page_table_kill (&curr->spt);
+	if(!hash_empty(&curr->spt.spt_hash)) // ? threads tests all fail
+		supplemental_page_table_kill (&curr->spt);
 #endif
 
 	uint64_t *pml4;
@@ -707,7 +708,7 @@ install_page (void *upage, void *kpage, bool writable) {
  * upper block. */
 /*================================ Project 3 ======================================*/
 
-static bool
+bool
 lazy_load_segment (struct page *page, void *aux) {
 	// aux는 load_segment에서 설정한 정보
 	// 이 정보를 사용하여 세그먼트를 읽을 파일을 찾고 세그먼트를 메모리로 읽어야 함

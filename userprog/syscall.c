@@ -39,6 +39,11 @@ void seek (int fd, unsigned position);
 unsigned tell (int fd);
 void close (int fd);
 
+/*------------------------- [P3] Mmf --------------------------*/
+
+void *mmap (void *addr, size_t length, int writable, int fd, off_t offset);
+void munmap (void *addr);
+
 /*------------------------- [P2] System Call - help function --------------------------*/
 static int fdt_add_fd(struct file *f); 
 static struct file *fdt_get_file(int fd); 
@@ -87,10 +92,6 @@ void
 syscall_handler (struct intr_frame *f UNUSED) {
 	// TODO: Your implementation goes here.
 	struct thread *curr = thread_current();
-	#ifdef VM
-		curr->rsp_stack = f->rsp;
-    #endif
-
 	switch (f->R.rax) // 시스템 콜 번호에 따라 분기
 	{
 	case SYS_HALT:
@@ -137,6 +138,12 @@ syscall_handler (struct intr_frame *f UNUSED) {
 		break;
 	case SYS_CLOSE:
 		close (f->R.rdi);
+		break;
+	case SYS_MMAP:
+		f->R.rax = mmap(f->R.rdi, f->R.rsi, f->R.rdx, f->R.r10, f->R.r8);
+		break;
+	case SYS_MUNMAP:
+		munmap(f->R.rdi);
 		break;
 	default:
 		exit (-1);
@@ -290,7 +297,6 @@ filesize (int fd){
  */
 int 
 read(int fd, void *buffer, unsigned size) {
-	// check_address(buffer);
 	int read_bytes = -1;
 
 	if(fd == STDIN_FILENO){ // fd 0 reads from the keyboard using input_getc()._gitbook
@@ -328,7 +334,6 @@ read(int fd, void *buffer, unsigned size) {
  */
 int
 write (int fd, const void *buffer, unsigned size) {
-	// check_address(buffer);
 	int write_bytes = -1;
 
 	if (fd == STDOUT_FILENO){
@@ -393,6 +398,60 @@ close (int fd){
 	fdt_remove_fd(fd); // fd table에서 해당 fd값을 제거한다.
 
 	file_close(target_file); // 열었던 파일을 닫는다.
+}
+
+/**
+ * @brief 열린 파일을 가상 주소 공간에 매핑한다.
+ * 
+ * @param addr 
+ * @param length 
+ * @param writable 
+ * @param fd 
+ * @param offset 
+ * @return void* 
+ */
+void *mmap (void *addr, size_t length, int writable, int fd, off_t offset){
+
+	/* Return NULL의 경우 
+	 * CASE 1. `addr` 가 0인 경우
+	 * CASE 2. `addr` 가 커널 가상 주소인 경우
+	 * CASE 3. `addr` 가 page-aligned 되지 않은 경우
+	 * CASE 4. 기존에 매핑된 페이지 집합(stack, 페이지)과 겹치는 경우
+	 * CASE 5. 읽으려는 파일의 offset 위치가 PGSIZE 보다 큰 경우
+	 * CASE 6. 읽으려는 파일의 길이가 0보다 작거나 같은 경우
+	 * CASE 7. STDIN, STDOUT 인 경우
+	 * CASE 8. 파일 객체가 존재하지 않는 경우
+	 * CASE 9. fd로 열린 파일의 길이가 0인 경우 */
+
+	// CASE 1 - 6
+    if (addr == NULL || is_kernel_vaddr(addr) || is_kernel_vaddr(pg_round_up(addr)) || pg_round_down(addr) != addr || spt_find_page(&thread_current()->spt, addr) \
+		|| offset > PGSIZE \
+		|| (long) length <= 0) // ? 형 변환 안하면 통과 못함 (Input : 음수)
+        return NULL;
+		
+	/* mmap-kernel TC
+	 * 
+	 * kernel = (void *) 0x8004000000 - 0x1000;
+  	 * CHECK (mmap (kernel, -0x8004000000 + 0x1000, 0, handle, 0) == MAP_FAILED,
+     * "try to mmap over kernel 2"); */
+
+    struct file *file = fdt_get_file(fd);
+
+	// CASE 7 - 9
+    if (fd <= STDOUT_FILENO || file == NULL || file_length(file) == 0)
+        return NULL;
+	
+	// do_mmap의 4번째 인자가 파일 객체이므로 fd로 부터 파일 객체를 얻은 값을 넣어준다.
+    return do_mmap(addr, length, writable, file, offset);
+}
+
+/**
+ * @brief mmap으로 매핑된 주소를 해제한다.
+ * 
+ * @param addr 
+ */
+void munmap (void *addr){
+	do_munmap(addr);
 }
 
 
