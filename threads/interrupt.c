@@ -263,6 +263,8 @@ intr_context (void) {
    interrupt handler to yield to a new process just before
    returning from the interrupt.  May not be called at any other
    time. */
+/* 외부 인터럽트를 처리하는 동안 인터럽트 핸들러가 직전의 새 프로세스가 작동하도록 한다
+   인터럽트에서 돌아오는 중입니다.  다른 시간에는 호출할 수 없습니다. */
 void
 intr_yield_on_return (void) {
 	ASSERT (intr_context ());

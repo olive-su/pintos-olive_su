@@ -239,9 +239,11 @@ thread_create (const char *name, int priority, thread_func *function, void *aux)
 	thread_unblock (t); // ready_list 에 새로 넣은 스레드 
 
 	if (thread_get_priority() < priority) { //1. 현재 실행중인 스레드와 새로 추가하려는 스레드 비교
-		thread_yield(); //2. 만약 새로 추가하려는 스레드가 현재 실행중인 스레드보다 우선순위가 높으면 CPU를 선점한다.
+		if (intr_context())
+  		    intr_yield_on_return();
+    	else
+			thread_yield(); //2. 만약 새로 추가하려는 스레드가 현재 실행중인 스레드보다 우선순위가 높으면 CPU를 선점한다.
 	}
-	
 	return tid;
 }
 
@@ -426,7 +428,10 @@ thread_set_priority (int new_priority) {
 	refresh_priority ();
 
 	if (thread_get_priority () < list_entry (list_begin (&ready_list), struct thread, elem)->priority) {
-		thread_yield ();
+		if (intr_context())
+    		intr_yield_on_return();
+    	else
+			thread_yield ();
 	}
 }
 

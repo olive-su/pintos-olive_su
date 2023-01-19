@@ -483,11 +483,19 @@ struct page* check_address(void *addr){
 // buffer + size 크기가 한 페이지(4kb)의 크기를 넘는 경우에 대한 처리
 static void
 check_buffer(void* buffer, unsigned size, bool writable) {
-	struct page* page = check_address(buffer + size);
-	if(page == NULL)
-		exit(-1);
-	if(!writable && page->writable == false) // true : writable, false : read-only
-		exit(-1);
+	// struct page* page = check_address(buffer + size);
+	for (int i = 0; i < size; i++) {
+        struct page* page = check_address(buffer + i); // 하나씩 다 확인
+
+		if(page == NULL)
+			exit(-1);
+		if(!writable && page->writable == false) // true : writable, false : read-only
+			exit(-1);
+    }
+	// if(page == NULL)
+	// 	exit(-1);
+	// if(!writable && page->writable == false) // true : writable, false : read-only
+	// 	exit(-1);
 }
 
 /**

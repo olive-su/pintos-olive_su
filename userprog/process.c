@@ -72,9 +72,9 @@ process_create_initd (const char *file_name) {
 static void
 initd (void *f_name) {
 // CHECK [process_exec -> supplemental_page_table_init]의 중복 선언으로 인한 코드 제거
-// #ifdef VM
-// 	supplemental_page_table_init (&thread_current ()->spt);
-// #endif
+#ifdef VM
+	supplemental_page_table_init (&thread_current ()->spt);
+#endif
 
 	process_init ();
 
@@ -98,7 +98,7 @@ process_fork (const char *name, struct intr_frame *if_ UNUSED) {
 	memcpy(&curr->parent_if, if_, sizeof(struct intr_frame)); // 전달받은 intr_frame을 parent_if필드에 복사한다.
 	// ↳ '__do_fork' 에서 자식 프로세스에 부모의 컨텍스트 정보를 복사하기 위함(부모의 인터럽트 프레임을 찾는 용도로 사용)
 
-	tid_t tid = thread_create(name, PRI_DEFAULT, __do_fork, curr); // __do_fork를 실행하는 스레드 생성, 현재 스레드를 인자로 넘겨준다.
+	tid_t tid = thread_create(name, curr->priority, __do_fork, curr); // __do_fork를 실행하는 스레드 생성, 현재 스레드를 인자로 넘겨준다.
 	if (tid == TID_ERROR)
 		return TID_ERROR;
 
@@ -278,6 +278,7 @@ process_exec (void *f_name) {
 
 	argument_stack(argc, argv, &_if); // argc, argv로 커맨드 라인 파싱
 	// hex_dump(_if.rsp, _if.rsp, USER_STACK - _if.rsp, true); // 메모리에 적재된 상태 출력
+	palloc_free_page (file_name);
 
 	/* Start switched process. */
 	do_iret (&_if);

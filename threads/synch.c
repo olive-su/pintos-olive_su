@@ -122,8 +122,12 @@ sema_up (struct semaphore *sema) {
 		list_sort(&sema->waiters, cmp_priority, NULL); // waiter_list 정렬
 		struct thread *new_lockholder = list_entry(list_pop_front (&sema->waiters), struct thread, elem);
 		thread_unblock (new_lockholder); // 세마포어를 해제하고 레디 상태로 만들어준다.
-		if (thread_get_priority() < new_lockholder->priority )
-			thread_yield();
+		if (thread_get_priority() < new_lockholder->priority ){
+			if (intr_context())
+				intr_yield_on_return();
+			else
+				thread_yield();
+		}
 	}
 	intr_set_level (old_level);
 }
